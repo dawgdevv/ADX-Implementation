@@ -1,0 +1,239 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+	<meta charset="UTF-8" />
+	<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+	<title>ADX Result</title>
+	<link rel="stylesheet" href="{% static 'css/style.css' %}" />
+	<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+	<!-- Zoom plugin requires Hammer.js for touch/pinch support. -->
+	<script src="https://cdn.jsdelivr.net/npm/hammerjs@2.0.8/hammer.min.js"></script>
+	<script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom@2.0.1/dist/chartjs-plugin-zoom.min.js"></script>
+</head>
+<body>
+<div class="page-wrap">
+
+	<!-- ─── Header ─────────────────────────────────────────── -->
+	<header class="header">
+		<p class="header__eyebrow">Computed from uploaded OHLC CSV &mdash; {{ total_rows }} data points</p>
+		<h1 class="header__title">Average <span>Directional</span> Index</h1>
+	</header>
+
+	<!-- ─── Stat Cards (latest values snapshot) ─────────────── -->
+	<!-- Each card shows the most recent computed value for quick reading. -->
+	<div class="stats">
+		<div class="stat-card stat-card--adx">
+			<p class="stat-card__label">ADX &mdash; Latest</p>
+			<p class="stat-card__value">{{ latest_adx }}</p>
+			<p class="stat-card__desc">Trend strength.<br>Above 25 = strong trend.</p>
+		</div>
+		<div class="stat-card stat-card--plus-di">
+			<p class="stat-card__label">+DI &mdash; Latest</p>
+			<p class="stat-card__value">{{ latest_plus_di }}</p>
+			<p class="stat-card__desc">Bullish pressure.<br>Higher = buyers dominate.</p>
+		</div>
+		<div class="stat-card stat-card--minus-di">
+			<p class="stat-card__label">&minus;DI &mdash; Latest</p>
+			<p class="stat-card__value">{{ latest_minus_di }}</p>
+			<p class="stat-card__desc">Bearish pressure.<br>Higher = sellers dominate.</p>
+		</div>
+	</div>
+
+	<!-- ─── Chart Panel ─────────────────────────────────────── -->
+	<div class="chart-panel">
+		<div class="chart-panel__header">
+			<div>
+				<p class="chart-panel__title">ADX / +DI / &minus;DI over Time</p>
+				<p class="chart-panel__meta">Period: 14-bar Wilder smoothing &mdash; threshold line at ADX = 25</p>
+			</div>
+			<!-- Right side: legend + reset zoom button -->
+			<div style="display:flex;align-items:center;gap:16px;flex-wrap:wrap;">
+				<div class="chart-legend">
+					<span class="chart-legend__item">
+						<span class="chart-legend__line" style="background:var(--adx)"></span>ADX
+					</span>
+					<span class="chart-legend__item">
+						<span class="chart-legend__line" style="background:var(--plus-di)"></span>+DI
+					</span>
+					<span class="chart-legend__item">
+						<span class="chart-legend__line" style="background:var(--minus-di)"></span>&minus;DI
+					</span>
+				</div>
+				<!-- Resets chart zoom back to full view. -->
+				<button class="btn--reset-zoom" id="resetZoom" type="button">Reset Zoom</button>
+			</div>
+		</div>
+
+		<!-- Chart.js renders into this canvas. -->
+		<canvas id="adxChart" height="100"></canvas>
+
+		<p class="threshold-note">&uarr; Dashed <strong>ADX = 25</strong> threshold. &nbsp;&#x1F50D; Scroll to zoom &nbsp;&middot;&nbsp; Drag to pan &nbsp;&middot;&nbsp; Double-click to reset.</p>
+	</div>
+
+	<!-- ─── Actions ─────────────────────────────────────────── -->
+	<div class="action-row">
+		<a class="btn btn--primary" href="{% url 'download_output' %}">
+			<svg width="13" height="13" viewBox="0 0 13 13" fill="none" aria-hidden="true">
+				<path d="M6.5 1v7M3 5.5l3.5 3.5L10 5.5M1.5 11.5h10" stroke="currentColor"
+				      stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+			</svg>
+			Download Output XLSX
+		</a>
+		<a class="btn btn--ghost" href="{% url 'index' %}">&larr; Upload another file</a>
+	</div>
+
+</div>
+
+<!-- Safe JSON context blobs from Django for Chart.js -->
+{{ labels|json_script:"labels-data" }}
+{{ adx_values|json_script:"adx-data" }}
+{{ plus_di_values|json_script:"plus-di-data" }}
+{{ minus_di_values|json_script:"minus-di-data" }}
+
+<script>
+	// ─── Pull data from Django-injected JSON script tags.
+	const labels       = JSON.parse(document.getElementById('labels-data').textContent);
+	const adxValues    = JSON.parse(document.getElementById('adx-data').textContent);
+	const plusDiValues = JSON.parse(document.getElementById('plus-di-data').textContent);
+	const minusValues  = JSON.parse(document.getElementById('minus-di-data').textContent);
+
+	// ─── Shared style values pulled from CSS variables for consistency.
+	const style   = getComputedStyle(document.documentElement);
+	const C_ADX   = style.getPropertyValue('--adx').trim();
+	const C_PLUS  = style.getPropertyValue('--plus-di').trim();
+	const C_MINUS = style.getPropertyValue('--minus-di').trim();
+	const C_MUTED = style.getPropertyValue('--muted').trim();
+	const C_DIM   = style.getPropertyValue('--dim').trim();
+	const C_TEXT  = style.getPropertyValue('--text').trim();
+
+	// ─── Helper: semi-transparent fill below each line.
+	function fillGradient(ctx, color) {
+		const g = ctx.createLinearGradient(0, 0, 0, ctx.canvas.height);
+		g.addColorStop(0, color + '33');
+		g.addColorStop(1, color + '00');
+		return g;
+	}
+
+	const canvas = document.getElementById('adxChart');
+	const ctx    = canvas.getContext('2d');
+
+	// Store reference so the Reset Zoom button can call chart.resetZoom().
+	const adxChart = new Chart(ctx, {
+		type: 'line',
+		data: {
+			labels,
+			datasets: [
+				{
+					label: 'ADX',
+					data: adxValues,
+					borderColor: C_ADX,
+					backgroundColor: fillGradient(ctx, C_ADX),
+					borderWidth: 2,
+					tension: 0.4,
+					pointRadius: 0,
+					fill: true,
+				},
+				{
+					label: '+DI',
+					data: plusDiValues,
+					borderColor: C_PLUS,
+					backgroundColor: fillGradient(ctx, C_PLUS),
+					borderWidth: 1.5,
+					tension: 0.4,
+					pointRadius: 0,
+					fill: true,
+				},
+				{
+					label: '-DI',
+					data: minusValues,
+					borderColor: C_MINUS,
+					backgroundColor: fillGradient(ctx, C_MINUS),
+					borderWidth: 1.5,
+					tension: 0.4,
+					pointRadius: 0,
+					fill: true,
+				},
+			],
+		},
+		options: {
+			responsive: true,
+			// Animate lines drawing from left to right on load.
+			animation: { duration: 1200, easing: 'easeInOutQuart' },
+			plugins: {
+				legend: { display: false },  // custom HTML legend used instead
+				// ─── Zoom / Pan (chartjs-plugin-zoom)
+				zoom: {
+					// Scroll wheel zooms along the X axis.
+					zoom: {
+						wheel:  { enabled: true },
+						pinch:  { enabled: true },  // touch pinch
+						mode:   'x',
+					},
+					// Drag to pan left/right through data.
+					pan: {
+						enabled: true,
+						mode:    'x',
+					},
+					// Double-click the chart to reset zoom.
+					limits: { x: { min: 'original', max: 'original' } },
+				},
+				tooltip: {
+					backgroundColor: '#1a1a24',
+					borderColor: '#2a2a38',
+					borderWidth: 1,
+					titleColor: C_TEXT,
+					bodyColor: C_DIM,
+					titleFont: { family: "'IBM Plex Mono'" },
+					bodyFont:  { family: "'IBM Plex Mono'", size: 11 },
+					padding: 12,
+					callbacks: {
+						// Show bar index as "Bar #N" in tooltip title.
+						title: items => `Bar #${items[0].label}`,
+						label: item => ` ${item.dataset.label}: ${item.parsed.y.toFixed(2)}`,
+					},
+				},
+			},
+			scales: {
+				x: {
+					ticks: { color: C_DIM, font: { size: 10 }, maxTicksLimit: 12 },
+					grid: { color: '#1e1e2a' },
+					border: { color: '#1e1e2a' },
+				},
+				y: {
+					ticks: { color: C_DIM, font: { size: 10 } },
+					grid: { color: '#1e1e2a' },
+					border: { color: '#1e1e2a' },
+				},
+			},
+		},
+		// ─── ADX = 25 threshold reference line drawn as an inline plugin.
+		plugins: [{
+			// Tap into afterDraw to paint a dashed line at y = 25 on every render.
+			// This runs after zoom/pan redraws too so the line always stays correct.
+			id: 'threshold25',
+			afterDraw(chart) {
+				const { ctx: c, scales: { y } } = chart;
+				const yPx = y.getPixelForValue(25);
+				const { left, right } = chart.chartArea;
+				c.save();
+				c.beginPath();
+				c.setLineDash([6, 4]);
+				c.strokeStyle = C_ADX + '66';
+				c.lineWidth   = 1;
+				c.moveTo(left, yPx);
+				c.lineTo(right, yPx);
+				c.stroke();
+				c.restore();
+			},
+		}],
+	});
+
+	// Wire Reset Zoom button to chart's built-in resetZoom() method.
+	document.getElementById('resetZoom').addEventListener('click', () => adxChart.resetZoom());
+
+	// Double-click anywhere on the chart canvas also resets zoom.
+	canvas.addEventListener('dblclick', () => adxChart.resetZoom());
+</script>
+</body>
+</html>

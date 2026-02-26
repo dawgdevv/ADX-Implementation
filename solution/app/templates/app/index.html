@@ -1,0 +1,106 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+	<meta charset="UTF-8" />
+	<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+	<title>ADX Indicator</title>
+	<link rel="stylesheet" href="{% static 'css/style.css' %}" />
+</head>
+<body>
+<div class="page-wrap">
+
+	<!-- ─── Header ─────────────────────────────────────────── -->
+	<header class="header">
+		<p class="header__eyebrow">Technical Analysis Tool</p>
+		<h1 class="header__title">Average <span>Directional</span> Index</h1>
+		<p class="header__sub">
+			Upload an OHLC CSV to compute ADX, +DI, and &minus;DI.
+			Results are plotted interactively and available for download.
+		</p>
+	</header>
+
+	<!-- ─── Error ──────────────────────────────────────────── -->
+	{% if error_message %}
+		<div class="error-banner">&#9888; {{ error_message }}</div>
+	{% endif %}
+
+	<!-- ─── Upload Form ────────────────────────────────────── -->
+	<!-- Entire zone is clickable thanks to the JS below. -->
+	<form action="{% url 'result' %}" method="post" enctype="multipart/form-data" id="upload-form">
+		{% csrf_token %}
+
+		<div class="upload-zone" id="upload-zone" role="button" tabindex="0"
+		     aria-label="Click to select a CSV file">
+
+			<!-- Upload icon -->
+			<svg class="upload-zone__icon" viewBox="0 0 52 52" fill="none"
+			     xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+				<rect width="52" height="52" rx="10" fill="#1e1e2a"/>
+				<path d="M26 33V20M26 20l-5 5M26 20l5 5" stroke="#38bdf8" stroke-width="2"
+				      stroke-linecap="round" stroke-linejoin="round"/>
+				<path d="M16 37h20" stroke="#38bdf8" stroke-width="2" stroke-linecap="round"/>
+			</svg>
+
+			<div class="upload-zone__label">
+				<strong>Click to select CSV</strong>
+				OHLC format &mdash; columns: Open, High, Low, Close
+			</div>
+
+			<!-- Hidden input; triggered by clicking the zone -->
+			<input id="csv_file" name="csv_file" type="file" accept=".csv" required />
+
+			<!-- File name shown after selection -->
+			<span class="file-chosen" id="file-chosen"></span>
+		</div>
+
+		<br />
+		<button type="submit" class="btn btn--primary">
+			<svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true">
+				<path d="M7 1v8M3 6l4 4 4-4M2 12h10" stroke="currentColor"
+				      stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+			</svg>
+			Compute &amp; Plot
+		</button>
+	</form>
+
+	<!-- ─── Indicator Legend ────────────────────────────────── -->
+	<!-- Brief explanation so users know what each line means. -->
+	<div class="badges">
+		<div class="badge">
+			<span class="badge__dot" style="background:var(--adx)"></span>
+			<span class="badge__name">ADX</span>
+			Trend strength &mdash; above 25 signals strong trend
+		</div>
+		<div class="badge">
+			<span class="badge__dot" style="background:var(--plus-di)"></span>
+			<span class="badge__name">+DI</span>
+			Bullish directional movement pressure
+		</div>
+		<div class="badge">
+			<span class="badge__dot" style="background:var(--minus-di)"></span>
+			<span class="badge__name">&minus;DI</span>
+			Bearish directional movement pressure
+		</div>
+	</div>
+
+</div>
+
+<script>
+	// Make the whole upload zone clickable and show chosen filename.
+	const zone = document.getElementById('upload-zone');
+	const input = document.getElementById('csv_file');
+	const label = document.getElementById('file-chosen');
+
+	zone.addEventListener('click', () => input.click());
+	zone.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') input.click(); });
+
+	input.addEventListener('change', () => {
+		if (input.files.length) {
+			label.textContent = input.files[0].name;
+			label.classList.add('visible');
+		}
+	});
+</script>
+</body>
+</html>
